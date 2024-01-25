@@ -54,8 +54,10 @@ def forward_layer(layer, position_ids, attention_mask, bs, device, in_q, out_q):
     attention_mask = attention_mask.to(device)
     done_qkv = utils.register_H_hook(layer.self_attn.q_proj, device)
     done_o = utils.register_H_hook(layer.self_attn.o_proj, device)
-    done_up = utils.register_H_hook(layer.mlp.up_proj, device)
-    done_down = utils.register_H_hook(layer.mlp.down_proj, device)
+
+    done_experts = {(i, 1): utils.register_H_hook(layer.block_sparse_moe.experts[i].w1, device)
+            for i in range(8)} | {(i, 2): utils.register_H_hook(layer.block_sparse_moe.experts[i].w2, device)
+            for i in range(8)}
 
     while True:
         dev_emb = in_q.get()
@@ -63,7 +65,9 @@ def forward_layer(layer, position_ids, attention_mask, bs, device, in_q, out_q):
             layer = layer.cpu()
             position_ids = position_ids.cpu()
             attention_mask = attention_mask.cpu()
-            out_q.put({'qkv': done_qkv(), 'o': done_o(), 'up': done_up(), 'down': done_down()})
+            out_q.put(
+                {"qkv": done_qkv(), "o": done_o()} | {f"expert_{i}_{j}": done_experts[(i,j)]() for j in (1,2) for i in range(8)}
+            )
             return
 
         assert len(dev_emb) % bs == 0
