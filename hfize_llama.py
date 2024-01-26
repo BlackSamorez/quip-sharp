@@ -7,6 +7,7 @@ from model.version import MODEL_VERSION
 from model.llama import LlamaForCausalLM as llama_fuse
 from model.llama_nofuse import LlamaForCausalLM as llama_nofuse
 from model.mistral import MistralForCausalLM
+from model.mixtral import MixtralForCausalLM
 from lib import codebook
 from lib.utils.unsafe_import import model_from_hf_path
 import time
@@ -56,6 +57,8 @@ def main(args):
         model_cls = llama_fuse if fused else llama_nofuse
     elif model_type == 'mistral':
         model_cls = MistralForCausalLM
+    elif model_type == 'mixtral':
+        model_cls = MixtralForCausalLM
     else:
         raise Exception
 
@@ -79,24 +82,25 @@ def main(args):
             layer.self_attn.qkv_proj.Wscale.copy_(saved_layer['Wscale'])
             unpack_quip(layer.self_attn.qkv_proj, saved_layer, codebook_id, codesz)
 
-            glog.info(f'loading layer {ii} up')
-            saved_layer = torch.load(f'{args.quantized_path}/{ii}_up.pt', map_location=cpu)
-            layer.mlp.upgate_proj.fuse_scales[0].copy_(saved_layer['W_up_scale'])
-            layer.mlp.upgate_proj.fuse_scales[1].copy_(saved_layer['W_gate_scale'])
-            layer.mlp.upgate_proj.Wscale.copy_(saved_layer['Wscale'])
-            unpack_quip(layer.mlp.upgate_proj, saved_layer, codebook_id, codesz)
-
             glog.info(f'loading layer {ii} o')
             saved_layer = torch.load(f'{args.quantized_path}/{ii}_o.pt', map_location=cpu)
             layer.self_attn.o_proj.Wscale.copy_(saved_layer['W_o_scale'] * saved_layer['Wscale'])
             unpack_quip(layer.self_attn.o_proj, saved_layer, codebook_id, codesz)
+            
+            for expert_idx in range(8):
+                glog.info(f'loading layer {ii} up')
+                saved_layer = torch.load(f'{args.quantized_path}/{ii}_expert_{expert_idx}_{1}.pt', map_location=cpu)
+                layer.block_sparse_moe.experts[expert_idx].upgate_proj.fuse_scales[0].copy_(saved_layer['W_up_scale'])
+                layer.block_sparse_moe.experts[expert_idx].upgate_proj.fuse_scales[1].copy_(saved_layer['W_gate_scale'])
+                layer.block_sparse_moe.experts[expert_idx].upgate_proj.Wscale.copy_(saved_layer['Wscale'])
+                unpack_quip(layer.block_sparse_moe.experts[expert_idx].upgate_proj, saved_layer, codebook_id, codesz)
 
-            glog.info(f'loading layer {ii} down')
-            saved_layer = torch.load(f'{args.quantized_path}/{ii}_down.pt', map_location=cpu)
-            layer.mlp.down_proj.Wscale.copy_(saved_layer['W_down_scale'] * saved_layer['Wscale'])
-            if model_config.quip_params['outlier_channel_split']:
-                layer.mlp.down_proj.ocs_dupe_inds.copy_(torch.tensor(saved_layer['ocs_dupe_inds']))
-            unpack_quip(layer.mlp.down_proj, saved_layer, codebook_id, codesz)
+                glog.info(f'loading layer {ii} down')
+                saved_layer = torch.load(f'{args.quantized_path}/{ii}_expert_{expert_idx}_{2}.pt', map_location=cpu)
+                layer.block_sparse_moe.experts[expert_idx].down_proj.Wscale.copy_(saved_layer['W_down_scale'] * saved_layer['Wscale'])
+                if model_config.quip_params['outlier_channel_split']:
+                    layer.block_sparse_moe.experts[expert_idx].down_proj.ocs_dupe_inds.copy_(torch.tensor(saved_layer['ocs_dupe_inds']))
+                unpack_quip(layer.block_sparse_moe.experts[expert_idx].down_proj, saved_layer, codebook_id, codesz)
 
         else:
             saved_layer = torch.load(f'{args.quantized_path}/{ii}_q.pt', map_location=cpu)

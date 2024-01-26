@@ -3,7 +3,7 @@ import datetime
 import random
 import argparse
 from copy import deepcopy
-from tqdm import tqdm
+from tqdm import tqdm, trange
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 
@@ -51,7 +51,7 @@ def forward_layer(layer, position_ids, attention_mask, bs, device, in_q, out_q):
     torch.set_grad_enabled(False)
     layer = layer.to(device)
     position_ids = position_ids.to(device)
-    attention_mask = attention_mask.to(device)
+    attention_mask = attention_mask.to(device) if attention_mask is not None else attention_mask
     done_qkv = utils.register_H_hook(layer.self_attn.q_proj, device)
     done_o = utils.register_H_hook(layer.self_attn.o_proj, device)
 
@@ -64,14 +64,14 @@ def forward_layer(layer, position_ids, attention_mask, bs, device, in_q, out_q):
         if dev_emb is None:
             layer = layer.cpu()
             position_ids = position_ids.cpu()
-            attention_mask = attention_mask.cpu()
+            attention_mask = attention_mask.cpu() if attention_mask is not None else attention_mask
             out_q.put(
                 {"qkv": done_qkv(), "o": done_o()} | {f"expert_{i}_{j}": done_experts[(i,j)]() for j in (1,2) for i in range(8)}
             )
             return
 
         assert len(dev_emb) % bs == 0
-        for i in range(len(dev_emb) // bs):
+        for i in trange(len(dev_emb) // bs):
             dev_emb[i * bs:(i + 1) * bs] = layer(dev_emb[i * bs:(i + 1) * bs].to(device),
                                                  position_ids=position_ids,
                                                  attention_mask=attention_mask,
@@ -151,12 +151,12 @@ def main(args):
         torch.zeros(args.batch_size, args.ctx_size, dtype=torch.int64)
     if hasattr(model.config, 'sliding_window'):
         # mistral models
-        attention_mask = model.model._prepare_decoder_attention_mask(
-            torch.ones(args.batch_size, args.ctx_size,
-                       dtype=torch.bool), (args.batch_size, args.ctx_size),
+        from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask_for_sdpa
+        attention_mask = _prepare_4d_causal_attention_mask_for_sdpa(
+            None, (args.batch_size, args.ctx_size),
             dev_emb[0:args.batch_size, :, :],
             0,
-            sliding_window=model.config.sliding_window)
+        )
     else:
         attention_mask = model.model._prepare_decoder_attention_mask(
             torch.ones(args.batch_size, args.ctx_size, dtype=torch.bool),
@@ -169,7 +169,7 @@ def main(args):
     else:
         move_q = None
 
-    for transformer_layer_index in range(len(model.model.layers)):
+    for transformer_layer_index in trange(len(model.model.layers)):
         if (transformer_layer_index <= after_layer):
             print(
                 f"skipping layer {transformer_layer_index} because it is before cached activations at layer {after_layer}"
@@ -179,7 +179,7 @@ def main(args):
         transformer_layer = model.model.layers[transformer_layer_index]
         # check that there are four layers, as expected
         assert (len([m for m in transformer_layer.modules()
-                     if isinstance(m, torch.nn.Linear)]) == 7)
+                     if isinstance(m, torch.nn.Linear)]) == 29)
 
         chunk_size = min(args.chunk_size, len(dev_emb))
         ngpus = min(torch.cuda.device_count(), len(dev_emb) // chunk_size)

@@ -4,7 +4,7 @@ import datetime
 import time
 import os
 import gc
-from tqdm import tqdm
+from tqdm import tqdm, trange
 import copy
 
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512'
@@ -136,11 +136,16 @@ def quantize_o(layer, idx, cb, args, device='cpu', check_only=False):
 
 
 def quantize_up(layer, idx, cb, args, device='cpu', check_only=False):
-    dtype_ = torch.float64 if args.use_fp64 else torch.float32
-    hatw_path = f'{args.save_path}/{idx}_up.pt'
+    for expert_idx in range(8):
+        quantize_up_expert(layer, idx, expert_idx, cb, args, device, check_only)
 
-    W_up = layer.mlp.up_proj.weight
-    W_gate = layer.mlp.gate_proj.weight
+
+def quantize_up_expert(layer, idx, expert_idx, cb, args, device='cpu', check_only=False):
+    dtype_ = torch.float64 if args.use_fp64 else torch.float32
+    hatw_path = f'{args.save_path}/{idx}_expert_{expert_idx}_{1}.pt'
+
+    W_up = layer.block_sparse_moe.experts[expert_idx].w1.weight
+    W_gate = layer.block_sparse_moe.experts[expert_idx].w3.weight
     W_up_scale = W_up.to(dtype_).square().mean().sqrt().to(dtype_)
     W_gate_scale = W_gate.to(dtype_).square().mean().sqrt().to(dtype_)
 
@@ -150,7 +155,7 @@ def quantize_up(layer, idx, cb, args, device='cpu', check_only=False):
         glog.info(f'loading saved hatW from {hatw_path}')
         hatW = utils.load_quip(hatw_path, cb, args, device)
     else:
-        H_data = torch.load(f'{args.hessian_path}/{idx}_up.pt', map_location=torch.device('cpu'))
+        H_data = torch.load(f'{args.hessian_path}/{idx}_expert_{expert_idx}_{1}.pt', map_location=torch.device('cpu'))
         H = utils.flat_to_sym(H_data['flatH'], H_data['n'])
         mu = H_data['mu']
         n = H_data['n']
@@ -181,10 +186,15 @@ def quantize_up(layer, idx, cb, args, device='cpu', check_only=False):
 
 
 def quantize_down(layer, idx, cb, args, device='cpu', check_only=False):
-    dtype_ = torch.float64 if args.use_fp64 else torch.float32
-    hatw_path = f'{args.save_path}/{idx}_down.pt'
+    for expert_idx in range(8):
+        quantize_down_expert(layer, idx, expert_idx, cb, args, device, check_only)
 
-    W_down = layer.mlp.down_proj.weight
+
+def quantize_down_expert(layer, idx, expert_idx, cb, args, device='cpu', check_only=False):
+    dtype_ = torch.float64 if args.use_fp64 else torch.float32
+    hatw_path = f'{args.save_path}/{idx}_expert_{expert_idx}_{2}.pt'
+
+    W_down = layer.block_sparse_moe.experts[expert_idx].w2.weight
     W_down_scale = W_down.to(dtype_).square().mean().sqrt().to(dtype_)
 
     if os.path.exists(hatw_path):
@@ -195,7 +205,7 @@ def quantize_down(layer, idx, cb, args, device='cpu', check_only=False):
         if args.outlier_channel_split:
             extra_inds = torch.load(hatw_path)['ocs_extra_inds']
     else:
-        H_data = torch.load(f'{args.hessian_path}/{idx}_down.pt', map_location=torch.device('cpu'))
+        H_data = torch.load(f'{args.hessian_path}/{idx}_expert_{expert_idx}_{2}.pt', map_location=torch.device('cpu'))
         H = utils.flat_to_sym(H_data['flatH'], H_data['n'])
         mu = H_data['mu']
         n = H_data['n']
@@ -227,7 +237,7 @@ def quantize_down(layer, idx, cb, args, device='cpu', check_only=False):
         # fuse back outlier channel split
         W_down_next = ocs.fuse_W(W_down_next, extra_inds)
 
-    layer.mlp.down_proj.weight.copy_(W_down_next)
+    layer.block_sparse_moe.experts[expert_idx].w2.weight.copy_(W_down_next)
 
 
 def quantize_layer(layer, idx, cb, args, device='cpu', return_layer=False):

@@ -4,6 +4,7 @@ from model.graph_wrapper import get_graph_wrapper
 from model.llama import LlamaForCausalLM as llama_fuse
 from model.llama_nofuse import LlamaForCausalLM as llama_nofuse
 from model.mistral import MistralForCausalLM
+from model.mixtral import MixtralForCausalLM
 import json
 import os
 import transformers
@@ -24,6 +25,9 @@ def model_from_hf_path(path, use_cuda_graph=True, use_flash_attn=True):
         elif model_type == 'mistral':
             model_str = transformers.MistralConfig.from_pretrained(path)._name_or_path
             model_cls = MistralForCausalLM
+        elif model_type == 'mixtral':
+            model_str = transformers.MixtralConfig.from_pretrained(path)._name_or_path
+            model_cls = MixtralForCausalLM
         else:
             raise Exception
     else:
