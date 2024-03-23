@@ -35,7 +35,16 @@ def model_from_hf_path(path, use_cuda_graph=True, use_flash_attn=True):
         else:
             raise Exception
 
+    if "70" in path:
+        revision = "d0157ef7dbd7a0ae85529610bcce7c400f7fd567"
+    elif "13" in path:
+        revision = "e1bf05f88ce56c85a58d9a21150102aef85a2ee0"
+    elif "7" in path:
+        revision = "cb7ab7234aa14e0f85e95bf740af5b27fffee24d"
+
     model = maybe_wrap(use_cuda_graph)(model_cls).from_pretrained(
-        path, torch_dtype='auto', low_cpu_mem_usage=True, use_flash_attention_2=use_flash_attn, device_map='auto').half()
+        path, torch_dtype='auto', low_cpu_mem_usage=True, use_flash_attention_2=use_flash_attn, device_map='auto',
+        revision=revision,
+    ).half()
             
     return model, model_str

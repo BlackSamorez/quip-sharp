@@ -38,11 +38,10 @@ def main(args):
         model=lm_eval_model,
         tasks=task_names,
         batch_size=args.batch_size,
-        no_cache=True,
         num_fewshot=args.num_fewshot,
     )
 
-    print(evaluator.make_table(results))
+    print(results)
 
     if args.output_path is not None:
         os.makedirs(os.path.dirname(args.output_path), exist_ok=True)

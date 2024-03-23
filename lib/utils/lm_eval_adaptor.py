@@ -1,12 +1,12 @@
 import transformers
 import torch
-from lm_eval.base import BaseLM
+from lm_eval.models.huggingface import HFLM as eval_wrapper
 import fnmatch
 
 # adapted from https://github.com/mit-han-lab/llm-awq/tree/main
 
 
-class LMEvalAdaptor(BaseLM):
+class LMEvalAdaptor(eval_wrapper):
 
     def __init__(self, model_name, model, tokenizer, batch_size=1, max_length=-1):
         super().__init__()
@@ -17,8 +17,8 @@ class LMEvalAdaptor(BaseLM):
         if "opt" in self.model_name:
             print("WARNING: Check opt output truncation for vocab size")
             raise NotImplementedError
-        self.model = model
-        self.model.eval()
+        self.quip_model = model
+        self.quip_model.eval()
 
         self.tokenizer = tokenizer
 
@@ -42,12 +42,12 @@ class LMEvalAdaptor(BaseLM):
     def max_length(self):
         if self._max_length != -1:
             return self._max_length
-        if hasattr(self.model.config, 'n_ctx'):
-            return self.model.config.n_ctx
-        elif hasattr(self.model.config, 'max_position_embeddings'):
-            return self.model.config.max_position_embeddings
-        elif hasattr(self.model.config, 'n_positions'):
-            return self.model.config.n_positions
+        if hasattr(self.quip_model.config, 'n_ctx'):
+            return self.quip_model.config.n_ctx
+        elif hasattr(self.quip_model.config, 'max_position_embeddings'):
+            return self.quip_model.config.max_position_embeddings
+        elif hasattr(self.quip_model.config, 'n_positions'):
+            return self.quip_model.config.n_positions
         # Jerry: need to check these defaults
         # elif 'bloom' in self.model_name:
         #     return 2048
@@ -58,7 +58,7 @@ class LMEvalAdaptor(BaseLM):
         # elif 'falcon' in self.model_name:
         #     return 2048
         else:
-            print(self.model.config)
+            print(self.quip_model.config)
             raise NotImplementedError
 
     @property
@@ -88,11 +88,11 @@ class LMEvalAdaptor(BaseLM):
         logits returned from the model
         """
         with torch.no_grad():
-            if isinstance(self.model, transformers.models.t5.modeling_t5.T5ForConditionalGeneration):
+            if isinstance(self.quip_model, transformers.models.t5.modeling_t5.T5ForConditionalGeneration):
                 dec_inps = torch.cat(
                     [
                         torch.tensor(
-                            self.model.generation_config.decoder_start_token_id,
+                            self.quip_model.generation_config.decoder_start_token_id,
                         )
                         .tile(len(inps), 1)
                         .to(inps),
@@ -104,18 +104,17 @@ class LMEvalAdaptor(BaseLM):
                 kwargs = {"decoder_input_ids": dec_inps,}
             else:
                 kwargs = {}
-            out = self.model(inps, **kwargs)[0]
+            out = self.quip_model(inps, **kwargs)[0]
             return out 
             # if "opt" in self.model_name:  # there are a few extra tokens in opt, which we should omit
             #     return out[:, :, :50257]
             # else:
             #     return out  # [:, :, :self.tokenizer.vocab_size]
 
-    def _model_generate(self, context, max_length, eos_token_id):
-        return self.model.generate(
+    def _model_generate(self, context, max_length, **kwargs):
+        return self.quip_model.generate(
             context,
             max_length=max_length,
-            eos_token_id=eos_token_id,
-            do_sample=False
+            do_sample=False,
         )
 
